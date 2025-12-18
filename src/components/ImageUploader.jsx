@@ -4,7 +4,38 @@ function ImageUploader({ onImageUpload, compact = false }) {
   const [isDragging, setIsDragging] = useState(false)
   const fileInputRef = useRef(null)
 
-  const handleFile = (file) => {
+  const resizeImage = (file, maxDimension = 768) => {
+    return new Promise((resolve) => {
+      const img = new Image()
+      img.onload = () => {
+        let { width, height } = img
+
+        // Only resize if larger than maxDimension
+        if (width > maxDimension || height > maxDimension) {
+          if (width > height) {
+            height = Math.round((height * maxDimension) / width)
+            width = maxDimension
+          } else {
+            width = Math.round((width * maxDimension) / height)
+            height = maxDimension
+          }
+        }
+
+        const canvas = document.createElement('canvas')
+        canvas.width = width
+        canvas.height = height
+        const ctx = canvas.getContext('2d')
+        ctx.drawImage(img, 0, 0, width, height)
+
+        // Get base64 without data URI prefix
+        const base64 = canvas.toDataURL('image/png').split(',')[1]
+        resolve(base64)
+      }
+      img.src = URL.createObjectURL(file)
+    })
+  }
+
+  const handleFile = async (file) => {
     if (!file) return
 
     // Validate file type
@@ -20,13 +51,9 @@ function ImageUploader({ onImageUpload, compact = false }) {
       return
     }
 
-    // Convert to base64
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      const base64 = e.target.result.split(',')[1]
-      onImageUpload(file, base64)
-    }
-    reader.readAsDataURL(file)
+    // Resize image to prevent GPU memory issues (max 768px)
+    const base64 = await resizeImage(file, 768)
+    onImageUpload(file, base64)
   }
 
   const handleDragOver = (e) => {
