@@ -3,16 +3,19 @@
 
 const API_URL = '/api/replicate/v1/predictions'
 
-// Poll for prediction result
-const pollForResult = async (predictionId, maxAttempts = 60) => {
+// Poll for prediction result with better status handling
+const pollForResult = async (predictionId, maxAttempts = 120) => {
   for (let i = 0; i < maxAttempts; i++) {
     const response = await fetch(`${API_URL}/${predictionId}`)
 
     if (!response.ok) {
+      const errorText = await response.text()
+      console.error('Poll error:', errorText)
       throw new Error('Failed to check prediction status')
     }
 
     const prediction = await response.json()
+    console.log(`Status: ${prediction.status} (attempt ${i + 1})`)
 
     if (prediction.status === 'succeeded') {
       const output = prediction.output
@@ -22,12 +25,12 @@ const pollForResult = async (predictionId, maxAttempts = 60) => {
       return output
     }
 
-    if (prediction.status === 'failed') {
+    if (prediction.status === 'failed' || prediction.status === 'canceled') {
       throw new Error(prediction.error || 'Image generation failed')
     }
 
-    // Wait 2 seconds before polling again
-    await new Promise(resolve => setTimeout(resolve, 2000))
+    // Wait 1.5 seconds before polling again
+    await new Promise(resolve => setTimeout(resolve, 1500))
   }
 
   throw new Error('Request timed out. Please try again.')
@@ -40,35 +43,37 @@ const pollForResult = async (predictionId, maxAttempts = 60) => {
  * @returns {Promise<string>} - URL or base64 of the edited image
  */
 export async function editImage(imageBase64, prompt) {
-  // Using InstructPix2Pix - designed for instruction-based image editing
-  const model = 'timothybrooks/instruct-pix2pix:30c1d0b916a6f8efce20493f5d61ee27491ab2a60437c13c588468b9810ec23f'
-
   try {
+    // Create prediction using the model identifier (Replicate will use latest version)
     const response = await fetch(API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        version: model.split(':')[1],
+        // Use model identifier - Replicate resolves to latest version
+        model: 'timothybrooks/instruct-pix2pix',
         input: {
           image: `data:image/png;base64,${imageBase64}`,
           prompt: prompt,
-          num_inference_steps: 50,
+          num_inference_steps: 30,
           guidance_scale: 7.5,
-          image_guidance_scale: 1.5,
+          image_guidance_scale: 1.2,
         },
       }),
     })
 
     if (!response.ok) {
-      const error = await response.json()
-      throw new Error(error.detail || 'Failed to start image processing')
+      const errorData = await response.json().catch(() => ({}))
+      console.error('API Error:', errorData)
+      throw new Error(errorData.detail || `API Error: ${response.status}`)
     }
 
     const prediction = await response.json()
-    const resultUrl = await pollForResult(prediction.id)
+    console.log('Prediction created:', prediction.id)
 
+    // Poll for the result
+    const resultUrl = await pollForResult(prediction.id)
     return resultUrl
   } catch (error) {
     console.error('Image editing error:', error)
